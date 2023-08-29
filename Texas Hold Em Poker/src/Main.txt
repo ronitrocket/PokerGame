@@ -1,0 +1,826 @@
+import java.awt.Color;
+import java.awt.Font;
+import java.awt.Image;
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileReader;
+import java.io.FileWriter;
+import java.io.IOException;
+import java.io.PrintWriter;
+
+import javax.imageio.ImageIO;
+
+import hsa.Console;
+
+
+//Program Name: Texas Hold'em Poker
+//Programmed by: Ronit Taleti
+//Created/Modified on: Jun 15th 2022
+//A nearly full recreation of Texas Hold'em style poker, with support for file saves and AI players
+//All-ins as well as other details may differ from the official rules
+//Uses 3 helper classes, to handle the properties of cards, players, and to evaluate hands
+//The AI is able to calculate its approximate chance of winning and can make decisions based on that to play or not.
+public class Main {
+
+	public static void main(String[] args) {
+		
+		// Booleans to handle games and rounds within them
+		boolean gameEnded = false;
+		boolean roundEnded;
+		
+		// Booleans to track different gameplay states
+		boolean firstPlay;
+		boolean betMadeInRound;
+		boolean playerWentAllIn;
+		boolean allPlayersActioned;
+	
+		// Booleans to validate input
+		boolean validMenuInput;
+		boolean validMoneyInput;
+		
+		// Used to take input from players
+		String userInput;
+		int moneyInput;
+		
+		// Used to handle input related to making and reading saves
+		String saveGameName;
+		String currentSaveFileLine;
+		int linesRead;
+		
+		// Variables to track the deck of cards, cards on the board and players
+		Card[] deck;
+		Card[] river;
+		int riverLength;
+		Player[] players;
+		Player currentPlayer;
+		int numPlayers;
+		int playersInGame;
+		
+		// Variables to track different player states
+		int currentBigBlind;
+		int currentPlayerIndex;
+		int playersPlaying;
+		
+		// Tracks how much money players put in, and the minimum amount of money to play a round
+		int pot;
+		int currentCallValue;
+		
+		// Used to help the AI calculate it's chances of winning;
+		double oddsOfWin;
+		double equity;
+		
+		// Reads and writes to save files
+		PrintWriter saveFileWriter;
+		BufferedReader saveFileReader;
+		
+		// The windows of the game
+		Console menu;
+		Console visuals;
+		Console game;
+		
+		
+		menu = new Console(10, 60, "Main Menu");
+		
+		while (true) {
+			// Initialize variables
+			saveFileWriter = null;
+			saveFileReader = null;
+			validMenuInput = false;
+			userInput = "";
+			saveGameName = "";
+			players = new Player[0];
+			numPlayers = 2;
+			currentBigBlind = 0;
+			
+			// Repeat until valid menu input is made
+			while (!validMenuInput) {
+				menu.println("Type 'Start' to start a game.");
+				menu.println("Type 'Load' to load a previously played game.");
+				menu.println("Type 'Info' for info.");
+				menu.print("Input: ");
+				userInput = menu.readString();
+				if (userInput.toLowerCase().equals("start")) {
+					validMenuInput = true;
+				} else if (userInput.toLowerCase().equals("load")) {
+					validMenuInput = true;
+				} else if (userInput.toLowerCase().equals("info")) {
+					menu.clear();
+					menu.println("This is a Java-based Texas Hold Em' Style poker game.");
+					menu.println("It supports 2-4 players.");
+					menu.println("Some rules may differ as this is an adaptation of the game.");
+					menu.println("A save game will be created when the game is quit.");
+					menu.println("Quitting is available at the end of a round.");
+					menu.println("Press anything to continue...");
+					menu.getChar();
+					menu.clear();
+				} else {
+					menu.clear();
+					menu.println("Enter a valid option!");
+				}
+			}
+			
+			menu.clear();
+			// Check if they started new game, then gets the players and initializes a new save
+			if (userInput.toLowerCase().equals("start")) {
+				validMenuInput = false;
+				
+				while (!validMenuInput) {
+					menu.println("Enter the amount of players in the game (2-4):");
+					
+					// Validates the input
+					try {
+						userInput = menu.readString();
+						numPlayers = Integer.parseInt(userInput);
+						if (numPlayers >= 2 && numPlayers <= 4) {
+							validMenuInput = true;
+						} else {
+							menu.println("Number of players must be between 2 and 4!");
+						}
+					} catch (NumberFormatException e) {
+						menu.clear();
+						menu.println("Enter an integer number!");
+					}
+				}
+				
+				menu.clear();
+				players = new Player[numPlayers];
+				for (int i = 0; i < numPlayers; i++) {
+					validMenuInput = false;
+					
+					while (!validMenuInput) {
+						menu.println("Enter player " + (i+1) + "'s name:");
+						userInput = menu.readLine();
+						
+						// Validates the input
+						if (userInput.strip() != "") {
+							validMenuInput = true;
+						} else {
+							menu.clear();
+							menu.println("Please enter a valid name!");
+						}
+					}
+					
+					players[i] = new Player(userInput, 1000);
+
+					// Checks if they are an AI
+					menu.println("Is this player an AI? (Y/N)");
+					userInput = menu.readLine();
+					if (userInput.toLowerCase().equals("y")) {
+						players[i].setAI(true);
+					}
+					menu.clear();
+				}
+				
+				menu.clear();
+				validMenuInput = false;
+				while (!validMenuInput) {
+					menu.println("Enter the name of the save game");
+					saveGameName = menu.readLine();
+					
+					// Validates the input
+					if (userInput.strip() != "") {
+						// Check if the file doesn't exist already
+						try {
+							saveFileReader = new BufferedReader(new FileReader(saveGameName + ".txt"));
+							menu.clear();
+							menu.println("Save already exists!");
+						} catch (IOException e) {
+							validMenuInput = true;
+						}
+					} else {
+						menu.clear();
+						menu.println("Please enter a valid name!");
+					}
+				}
+				
+				// Create a new save file and initialize it with values in case of the game being quit
+				try {
+					saveFileWriter = new PrintWriter(new FileWriter(saveGameName + ".txt"));
+				} catch (IOException e) {
+					saveFileWriter = null;
+				}
+				saveFileWriter.println("Game save");
+				saveFileWriter.println(numPlayers);
+				for (int i = 0; i < numPlayers; i++) {
+					saveFileWriter.println(players[i].getName() + "," + players[i].getMoney());
+				}
+				saveFileWriter.println(currentBigBlind);
+				saveFileWriter.close();
+			}
+			
+			// Check if they want to load a game, then check for the save file and load it.
+			if (userInput.toLowerCase().equals("load")) {
+				validMenuInput = false;
+				while (!validMenuInput) {
+					menu.println("Enter the name of the game:");
+					saveGameName = menu.readString();
+					
+					// Validates the save file
+					try {
+						saveFileReader = new BufferedReader(new FileReader(saveGameName + ".txt"));
+						if (saveFileReader.readLine() != null) {
+							validMenuInput = true;
+						} else {
+							menu.clear();
+							menu.println("Save file is empty.");
+						}
+					} catch (IOException e) {
+						menu.clear();
+						menu.println("Save not found!");
+					}
+				}
+				
+				menu.clear();
+				
+				// Initialize the file reader variables
+				currentSaveFileLine = null;
+				try {
+					currentSaveFileLine = saveFileReader.readLine();
+				} catch (IOException e1) {
+					currentSaveFileLine = null;
+				}
+				linesRead = 2;
+				
+				// Read until the end of the file
+				while (currentSaveFileLine != null) {
+					// Check the number of players
+					if (linesRead == 2) {
+						numPlayers = 4;
+						try {
+							numPlayers = Integer.parseInt(currentSaveFileLine);
+						} catch (NumberFormatException e) {
+							menu.println("Save file is corrupted: Initializing players as 4");
+						}
+						players = new Player[numPlayers];
+					} else if (linesRead >= 3 && linesRead <= 2+numPlayers) { // Get each player and initalize them
+						moneyInput = 1000;
+						try {
+							moneyInput = Integer.parseInt(currentSaveFileLine.split(",")[1]);
+						} catch (NumberFormatException e) {
+							menu.println("Save file is corrupted: Initializing money as 1000");
+						}
+						if (currentSaveFileLine.split(",")[2] == "true") {
+							players[linesRead-3] = new Player(currentSaveFileLine.split(",")[0], moneyInput);
+							players[linesRead-3].setAI(true);
+						} else {
+							players[linesRead-3] = new Player(currentSaveFileLine.split(",")[0], moneyInput);
+							players[linesRead-3].setAI(true);
+						}
+					} else { // Initialize the current big blind player
+						currentBigBlind = 0;
+						try {
+							currentBigBlind = Integer.parseInt(currentSaveFileLine);
+						} catch (NumberFormatException e) {
+							menu.println("Save file is corrupted: Initializing big blind as first player.");
+						}
+					}
+					try {
+						currentSaveFileLine = saveFileReader.readLine();
+					} catch (IOException e) {
+						currentSaveFileLine = null;
+					}
+					linesRead++;
+				}
+				
+				// Notify user
+				menu.println("Game '" + userInput + "' was loaded.");
+				menu.println("Press anything to continue..");
+				menu.getChar();
+			}
+			
+			// Create game windows, visuals for the board, and game for the input
+			visuals = new Console(44, 160,  "Poker Game");
+			game = new Console(22, 80, "Game Input");
+			
+			// Initialize the deck of cards, river, and the players who are still in the game
+			playersInGame = numPlayers;
+			deck = Card.generateCards();
+			river = new Card[]{};
+			
+			menu.clear();
+
+			// Main game loop
+			while (!gameEnded) {
+				// Shuffle the deck and reset round related variables
+				deck = Card.shuffle(deck);
+				pot = 0;
+				currentCallValue = 20;
+				currentPlayerIndex = 0;
+				roundEnded = false;
+				firstPlay = true;
+				playerWentAllIn = false;
+				allPlayersActioned = false;
+				players = Player.resetActions(players);
+				betMadeInRound = false;
+
+				
+				visuals.clear();
+				
+				// Set the next player in line to be big blind
+				for (int i = 0; i < numPlayers; i++) {
+					players[currentBigBlind].setBigBlind(false);
+				}
+				players[currentBigBlind].setBigBlind(true);
+				currentBigBlind++;
+				if (currentBigBlind >= numPlayers) {
+					currentBigBlind = 0;
+				}
+				
+				// Give each player a hand, and check if they don't have the money to play a round.
+				for (int i = 0; i < numPlayers; i++) {
+					if (!players[i].isBigBlind()) {
+						if (players[i].getMoney() > 0) {
+		 					Card card1 = Card.getCardFromDeck(deck);
+							deck = Card.removeCardFromDeck(deck);
+							Card card2 = Card.getCardFromDeck(deck);
+							deck = Card.removeCardFromDeck(deck);
+							players[i].setHand(card1, card2);
+							players[i].setPlayingRound(true);
+						} else {
+							players[i].setPlayingRound(false);
+							playersInGame -= 1;
+						}
+					} else {
+						if (players[i].getMoney() > 20) {
+		 					Card card1 = Card.getCardFromDeck(deck);
+							deck = Card.removeCardFromDeck(deck);
+							Card card2 = Card.getCardFromDeck(deck);
+							deck = Card.removeCardFromDeck(deck);
+							players[i].setHand(card1, card2);
+							players[i].setPlayingRound(true);
+						} else {
+							players[i].setPlayingRound(false);
+							playersInGame -= 1;
+						}
+					}
+				}
+				
+				
+				// If there is one player left with money, end the game
+				if (playersInGame <= 1) {
+					break;
+				}
+				
+				// Main round loop
+				while (!roundEnded) {
+					// Loop until all players have bet
+					while (!allPlayersActioned) {
+						currentPlayer = players[currentPlayerIndex];
+						
+						// How many players haven't folded
+						playersPlaying = 0;
+						for (int j = 0; j < numPlayers; j++) {
+							playersPlaying += players[j].isPlayingRound() ? 1 : 0;
+						}
+						
+						// Check if player hasn't folded and there is one other player who also hasn't folded
+						if (currentPlayer.isPlayingRound() && playersPlaying > 1) {
+							Card[] hand = currentPlayer.getHand();
+							drawImageAtCenter(visuals, "background.png", 1280, 748, 640, 374);
+							
+							// Check if this player is an AI
+							if (!currentPlayer.isAI()) {
+								// Notify user
+								game.println("Give the device to " + currentPlayer.getName() + ", then " + currentPlayer.getName() + " can press anything to start his turn.");
+								game.getChar();
+								game.clear();
+								game.println("Refer to the game window for your hand and the river.");
+								for (int cardIndex = 0; cardIndex < hand.length; cardIndex++) {
+									drawImageAtCenter(visuals, hand[cardIndex].getSuit() + hand[cardIndex].getValue() + ".png", 166, 242, 640-87+cardIndex*174, 282);
+								}
+								if (river.length > 0) {
+									drawStringAtCenter(visuals, "River:", 640, 480, 35, Color.WHITE);
+									for (int cardIndex = 0; cardIndex < river.length; cardIndex++) {
+										drawImageAtCenter(visuals, river[cardIndex].getSuit() + river[cardIndex].getValue() + ".png", 83, 121, 640-166+cardIndex*83, 564);
+									}
+								}
+								drawStringAtCenter(visuals, currentPlayer.getName() + "'s Hand", 640, 125, 50, Color.WHITE);
+								
+								// If the player is the bigBlind and it's their first play
+								if (currentPlayer.isBigBlind() && firstPlay) {
+									firstPlay = false;
+									if (!betMadeInRound) {
+										betMadeInRound = true;
+										players = Player.resetActions(players);
+									}
+									
+									// Notify user of information
+									game.println("You are big blind and must bet 20$");
+									pot += currentCallValue;
+									currentPlayer.removeMoney(currentCallValue);
+									validMenuInput = false;
+									game.println("You have " + currentPlayer.getMoney() + "$ after betting 20$");
+									game.println("Current call value: " + currentCallValue + "$");
+									game.println("The pot has " + pot + "$");
+									
+									// Check user input
+									while (!validMenuInput) {
+										game.println("Type 'Raise' to raise, 'Check' to pass your turn, or 'Fold' to fold");
+										userInput = game.readString();
+										
+										if (userInput.toLowerCase().equals("raise")) {
+											if (currentPlayer.getMoney() >= currentCallValue) { // Can they raise?
+												validMoneyInput = false;
+												while (!validMoneyInput) {
+													game.println("How much would you like to raise by?");
+													
+													// Validate input, must have enough money to raise, and must do it by amount divisible by 10
+													try {
+														userInput = game.readString();
+														moneyInput = Integer.parseInt(userInput);
+														if (moneyInput <= currentPlayer.getMoney() && moneyInput >= currentCallValue && moneyInput % 10 == 0) {
+															validMenuInput = true;
+															validMoneyInput = true;
+															pot += moneyInput;
+															currentPlayer.removeMoney(moneyInput);
+															currentCallValue += moneyInput;
+														} else if (moneyInput > currentPlayer.getMoney()) {
+															game.println("You can't raise with more money than you have.");
+														} else if (moneyInput < currentCallValue) {
+															game.println("You must raise more than the current call value! (Value: " + currentCallValue + ")");
+														} else {
+															game.println("You must raise by a multiple of 10!");
+														}
+													} catch (NumberFormatException e) {
+														game.println("Enter an integer number!");
+													}
+												}
+											} else {
+												game.println("You do not have enough money to raise!");
+											}
+										} else if (userInput.toLowerCase().equals("fold")) { // Remove player from the round
+											currentPlayer.setPlayingRound(false);
+											validMenuInput = true;
+										} else if (userInput.toLowerCase().equals("check")) { // Skip turn
+											validMenuInput = true;
+										}
+									}
+								} else {
+									// Notify user of information
+									validMenuInput = false;
+									game.println("You have " + currentPlayer.getMoney() + "$");
+									game.println("Current call value: " + currentCallValue + "$");
+									game.println("The pot has " + pot + "$");
+									
+									// Check user input
+									while (!validMenuInput) {
+										game.println("Type 'Call' to call, 'Raise' to raise, 'Fold' to fold, or 'Check' to check");
+										userInput = game.readString();
+										
+										if (userInput.toLowerCase().equals("call")) { // Call the bet
+											if (currentCallValue <= currentPlayer.getMoney()) { // Validate input
+												validMenuInput = true;
+												pot += currentCallValue;
+												currentPlayer.removeMoney(currentCallValue);
+												if (!betMadeInRound) {
+													betMadeInRound = true;
+													players = Player.resetActions(players);
+												}
+											} else { // If they can't call, they must go all-in
+												validMenuInput = true;
+												pot += currentPlayer.getMoney();
+												for (int i = 0; i < numPlayers; i++) {
+													pot -= players[i].getAmountBet() - currentPlayer.getMoney();
+													players[i].returnBetMoney(players[i].getAmountBet() - currentPlayer.getMoney());
+													players[i].setHasActioned(true);
+												}
+												game.println(pot);
+												currentPlayer.removeMoney(currentPlayer.getMoney());
+												playerWentAllIn = true;
+												game.println("You went all in. Excess money was returned to other players.");
+												game.println("Press any key to continue.");
+												game.getChar();
+											}
+										} else if (userInput.toLowerCase().equals("raise")) { // Raise the bet
+											if (currentPlayer.getMoney() >= currentCallValue) { // Can they raise?
+												validMoneyInput = false;
+												while (!validMoneyInput) { // Validate input
+													game.println("How much would you like to raise by?");
+													try {
+														userInput = game.readString();
+														moneyInput = Integer.parseInt(userInput);
+														if (moneyInput <= currentPlayer.getMoney() && moneyInput >= currentCallValue && moneyInput % 10 == 0) {
+															validMenuInput = true;
+															validMoneyInput = true;
+															pot += moneyInput;
+															currentPlayer.removeMoney(moneyInput);
+															currentCallValue += moneyInput;
+															betMadeInRound = true;
+															players = Player.resetActions(players);
+														} else if (moneyInput > currentPlayer.getMoney()) {
+															game.println("You can't bet more money than you have.");
+														} else if (moneyInput < currentCallValue) {
+															game.println("You must bet more than the current call value! (Value: " + currentCallValue + ")");
+														} else {
+															game.println("You must raise by a multiple of 10!");
+														}
+													} catch (NumberFormatException e) {
+														game.println("Enter an integer number!");
+													}
+												}
+											} else {
+												game.println("You do not have enough money to raise!");
+											}
+										} else if (userInput.toLowerCase().equals("fold")) { // Fold the hand
+											currentPlayer.setPlayingRound(false);
+											validMenuInput = true;
+										} else if (userInput.toLowerCase().equals("check")) { // Skip turn if no one has bet
+											if (!betMadeInRound) {
+												validMenuInput = true;
+											} else {
+												game.println("No one in the round must have bet to check!");
+											}
+										}
+									}
+								}
+								currentPlayer.setHasActioned(true);
+							} else {
+								// AI Code
+								game.println("The AI '" + currentPlayer.getName() + "' is playing..");
+								game.println("Press anything to continue.");
+								game.getChar();
+								// If AI is big blind, check
+								if (currentPlayer.isBigBlind() && firstPlay) {
+									firstPlay = false;
+									game.println("The AI checked");
+								} else {
+									// If the river hasn't flopped, or the AI is the first move, call, else calculate odds of winning
+									if (river.length != 0) {
+										if (pot > 0) {
+											game.println("The AI is making a move....");
+											oddsOfWin = Player.analyzeOdds(river, currentPlayer.getHand(), playersPlaying); // Odds of winning against the playing players in 1 million matches
+											equity = (double)currentCallValue/(pot+currentCallValue); // Equity of the pot
+											if (oddsOfWin > equity+.3) { // Raises if it is 30% likely to win
+												pot += currentCallValue+20;
+												currentPlayer.removeMoney(currentCallValue+20);
+												currentCallValue += currentCallValue+20;
+												game.println("The AI raised by 20");
+											} else if (oddsOfWin < equity+.3 && oddsOfWin > equity) {  // Calls if it isn't 30% likely to win
+												pot += currentCallValue;
+												currentPlayer.removeMoney(currentCallValue+20);
+												game.println("The AI called");
+											} else { // Fold if it has bad odds
+												currentPlayer.setPlayingRound(false);
+												game.println("The AI folded");
+											}
+										} else {
+											pot += currentCallValue;
+											currentPlayer.removeMoney(currentCallValue+20);
+											game.println("The AI called");
+										}
+									} else {
+										pot += currentCallValue;
+										currentPlayer.removeMoney(currentCallValue+20);
+										game.println("The AI called");
+									}
+								}
+								currentPlayer.setHasActioned(true);
+								game.println("Press anything to continue.");
+								game.getChar();
+							}
+						}
+						// Cycle player
+						currentPlayerIndex++;
+						if (currentPlayerIndex >= numPlayers) {
+							currentPlayerIndex = 0;
+						}
+						
+						// If all players bet, end turn
+						allPlayersActioned = (playersPlaying == 1 || Player.checkActions(players)) ? true : false;
+						
+						game.clear();
+					}
+					
+					visuals.clear();
+					drawImageAtCenter(visuals, "background.png", 1280, 748, 640, 374);
+					
+					// If there are still players in game
+					if (playersInGame >= 2) {
+						playersPlaying = 0;
+						for (int i = 0; i < numPlayers; i++) {
+							playersPlaying += players[i].isPlayingRound() ? 1 : 0;
+						}
+						
+						// Initialize river if someone went all in
+						if (playerWentAllIn) {
+							while (river.length < 5) {
+								river = Card.addCardToDeck(river, Card.getCardFromDeck(deck));
+								deck = Card.removeCardFromDeck(deck);
+							}
+						}
+						
+						// If everyone folded, show everyone's hands and award money.
+						if (playersPlaying == 1) {
+							roundEnded = true;
+							if (river.length > 0) {
+								drawStringAtCenter(visuals, "River", 640, 260, 50, Color.WHITE);
+							}
+							for (int cardIndex = 0; cardIndex < river.length; cardIndex++) {
+								drawImageAtCenter(visuals, river[cardIndex].getSuit() + river[cardIndex].getValue() + ".png", 166, 242, 640-332+cardIndex*174, 400);
+							}
+							for (int i = 0; i < numPlayers; i++) {
+								Card card1 = players[i].getHand()[0];
+								Card card2 = players[i].getHand()[1];
+								switch (i) {
+									case 0:
+										drawStringAtCenter(visuals, players[i].getName() + "'s Hand", 640, 65, 35, Color.WHITE);
+										drawImageAtCenter(visuals, card1.getSuit() + card1.getValue() + ".png", 83, 121, 640-50, 141);
+										drawImageAtCenter(visuals, card2.getSuit() + card2.getValue() + ".png", 83, 121, 640+50, 141);
+										break;
+									case 1:
+										drawStringRightAligned(visuals, players[i].getName() + "'s Hand", 1210, 220, 35, Color.WHITE);
+										drawImageAtCenter(visuals, card1.getSuit() + card1.getValue() + ".png", 83, 121, 1177, 374-70);
+										drawImageAtCenter(visuals, card2.getSuit() + card2.getValue() + ".png", 83, 121, 1177, 374+70);
+										break;
+									case 2:
+										drawStringAtCenter(visuals, players[i].getName() + "'s Hand", 640, 710, 35, Color.WHITE);
+										drawImageAtCenter(visuals, card1.getSuit() + card1.getValue() + ".png", 83, 121, 640-50, 607);
+										drawImageAtCenter(visuals, card2.getSuit() + card2.getValue() + ".png", 83, 121, 640+50, 607);
+										break;
+									case 3:
+										drawStringLeftAligned(visuals, players[i].getName() + "'s Hand", 60, 220, 35, Color.WHITE);
+										drawImageAtCenter(visuals, card1.getSuit() + card1.getValue() + ".png", 83, 121, 103, 374-70);
+										drawImageAtCenter(visuals, card2.getSuit() + card2.getValue() + ".png", 83, 121, 103, 374+70);
+										break;
+								}
+								
+								// Put all cards back in deck
+								players[i].setHand(null, null);
+								deck = Card.addCardToDeck(deck, card1);
+								deck = Card.addCardToDeck(deck, card2);
+								
+								if (players[i].isPlayingRound()) {
+									players[i].addMoney(pot);
+									game.println("Everyone folded except for " + players[i].getName());
+									game.println(players[i].getName() + " made " + pot + "$" + " and now has " + players[i].getMoney());
+								}
+							}
+							
+							// Put all cards back in deck
+							riverLength = river.length;
+							for (int i = 0; i < riverLength; i++) {
+								deck =  Card.addCardToDeck(deck, Card.getCardFromDeck(river));
+								river = Card.removeCardFromDeck(river);
+							}
+						} else if (river.length >= 5) { // If the river is complete, display hands and award money according to hand ranks.
+							roundEnded = true;
+							game.println("All players must show their cards");
+							Player winningPlayer = PokerUtils.getWinningPlayer(river, players);
+							game.println("Current river: ");
+							drawStringAtCenter(visuals, "River", 640, 260, 50, Color.WHITE);
+							for (int cardIndex = 0; cardIndex < river.length; cardIndex++) {
+								drawImageAtCenter(visuals, river[cardIndex].getSuit() + river[cardIndex].getValue() + ".png", 166, 242, 640-332+cardIndex*174, 400);
+							}
+							for (int i = 0; i < numPlayers; i++) {
+								Card card1 = players[i].getHand()[0];
+								Card card2 = players[i].getHand()[1];
+								switch (i) {
+									case 0:
+										drawStringAtCenter(visuals, players[i].getName() + "'s Hand", 640, 65, 35, Color.WHITE);
+										drawImageAtCenter(visuals, card1.getSuit() + card1.getValue() + ".png", 83, 121, 640-50, 141);
+										drawImageAtCenter(visuals, card2.getSuit() + card2.getValue() + ".png", 83, 121, 640+50, 141);
+										break;
+									case 1:
+										drawStringRightAligned(visuals, players[i].getName() + "'s Hand", 1210, 220, 35, Color.WHITE);
+										drawImageAtCenter(visuals, card1.getSuit() + card1.getValue() + ".png", 83, 121, 1177, 374-70);
+										drawImageAtCenter(visuals, card2.getSuit() + card2.getValue() + ".png", 83, 121, 1177, 374+70);
+										break;
+									case 2:
+										drawStringAtCenter(visuals, players[i].getName() + "'s Hand", 640, 710, 35, Color.WHITE);
+										drawImageAtCenter(visuals, card1.getSuit() + card1.getValue() + ".png", 83, 121, 640-50, 607);
+										drawImageAtCenter(visuals, card2.getSuit() + card2.getValue() + ".png", 83, 121, 640+50, 607);
+										break;
+									case 3:
+										drawStringLeftAligned(visuals, players[i].getName() + "'s Hand", 60, 220, 35, Color.WHITE);
+										drawImageAtCenter(visuals, card1.getSuit() + card1.getValue() + ".png", 83, 121, 103, 374-70);
+										drawImageAtCenter(visuals, card2.getSuit() + card2.getValue() + ".png", 83, 121, 103, 374+70);
+										break;
+								}
+								
+								// Put all cards back in deck
+								players[i].setHand(null, null);
+								deck = Card.addCardToDeck(deck, card1);
+								deck = Card.addCardToDeck(deck, card2);
+								
+								if (players[i] == winningPlayer) {
+									players[i].addMoney(pot);
+									game.println(players[i].getName() + " made " + pot + "$" + " and now has " + players[i].getMoney());
+								}
+							}
+							
+							// Put all cards back in deck
+							riverLength = river.length;
+							for (int i = 0; i < riverLength; i++) {
+								System.out.println(i);
+								deck =  Card.addCardToDeck(deck, Card.getCardFromDeck(river));
+								river = Card.removeCardFromDeck(river);
+							}
+						} else {
+							// Add cards to the river (3 on the flop, 1 otherwise)
+							if (river.length == 0) {
+								for (int i = 0; i < 3; i++) {
+									river = Card.addCardToDeck(river, Card.getCardFromDeck(deck));
+									deck = Card.removeCardFromDeck(deck);
+								}
+							} else {
+								river = Card.addCardToDeck(river, Card.getCardFromDeck(deck));
+								deck = Card.removeCardFromDeck(deck);
+							}
+						}
+						
+						// Reset actions
+						allPlayersActioned = false;
+						players = Player.resetActions(players);
+						betMadeInRound = false;
+						
+						// Notify user of round end
+						game.println("Betting round ended, press anything to continue");
+						game.getChar();
+						game.clear();
+						
+						// Ask user if they would like to save and quit
+						game.println("Would you like to save and exit? (Y/N)");
+						userInput = game.readLine();
+						if (userInput.toLowerCase().equals("y")) {
+							if (saveFileWriter == null) {
+								try {
+									saveFileWriter = new PrintWriter(new FileWriter(saveGameName + ".txt"));
+								} catch (IOException e) {
+									saveFileWriter = null;
+								}
+							} else {
+								saveFileWriter.close();
+								try {
+									saveFileWriter = new PrintWriter(new FileWriter(saveGameName + ".txt"));
+								} catch (IOException e) {
+									saveFileWriter = null;
+								}
+							}
+							saveFileWriter.println("Game save");
+							saveFileWriter.println(numPlayers);
+							for (int i = 0; i < numPlayers; i++) {
+								saveFileWriter.println(players[i].getName() + "," + players[i].getMoney() + "," + players[i].isAI());
+							}
+							saveFileWriter.println(currentBigBlind);
+							saveFileWriter.close();
+							System.exit(0);
+						}
+						game.clear();
+					} else { // If one player left, end game
+						gameEnded = true;
+					}
+				}
+			}
+			
+			// Display winner!
+			for (int i = 0; i < numPlayers; i++) {
+				if (players[i].getMoney() > 0) {
+					drawImageAtCenter(visuals, "background.png", 1280, 748, 640, 374);
+					drawStringAtCenter(visuals, players[i].getName() + " wins!", 640, 374, 100, Color.YELLOW);
+				}
+			}
+			
+			game.clear();
+			game.println("Press anything to continue...");
+			game.getChar();
+			game.close();
+			visuals.close();
+		}		
+	}
+	
+	
+	// Method to draw a centered string
+	private static void drawStringAtCenter(Console c, String string, int posX, int posY, int size, Color color) {
+		c.setColor(color);
+		c.setFont(new Font("Serif", Font.BOLD, size));
+		c.drawString(string, posX-(size*27/48)*string.length()/2, posY);
+		c.setFont(new Font("Serif", Font.BOLD, 12));
+	}
+	
+	// Method to draw a right-aligned string
+	private static void drawStringRightAligned(Console c, String string, int posX, int posY, int size, Color color) {
+		c.setColor(color);
+		c.setFont(new Font("Serif", Font.BOLD, size));
+		c.drawString(string, posX-(size*27/48)*string.length(), posY);
+		c.setFont(new Font("Serif", Font.BOLD, 12));
+	}
+	
+	// Method to draw a left-aligned string
+	private static void drawStringLeftAligned(Console c, String string, int posX, int posY, int size, Color color) {
+		c.setColor(color);
+		c.setFont(new Font("Serif", Font.BOLD, size));
+		c.drawString(string, posX, posY);
+		c.setFont(new Font("Serif", Font.BOLD, 12));
+	}
+
+	// Method to draw a centered scaled image
+	private static void drawImageAtCenter(Console c, String path, int width, int height, int posX, int posY) {
+		Image image;
+		try {
+			image = ImageIO.read(new File(path)).getScaledInstance(width, height, Image.SCALE_SMOOTH);
+		} catch (IOException e) {
+			image = null;
+		}
+		c.drawImage(image, posX-image.getWidth(null)/2, posY-image.getHeight(null)/2, null);
+	}
+}

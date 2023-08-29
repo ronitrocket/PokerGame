@@ -1,0 +1,6 @@
+Game save
+3
+Ronit,1000
+Ishaan,1000
+AI,1000
+0
